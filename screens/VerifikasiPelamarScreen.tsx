@@ -54,7 +54,7 @@ export default function VerifikasiPelamarScreen({
   const BASE_URL =
     Constants.expoConfig?.extra?.API_URL ||
     process.env.EXPO_PUBLIC_API_URL ||
-    "http://192.168.1.6:5000";
+    "https://backendattendancemobile-production.up.railway.app";
 
   // ========================================
   // FETCH APPLICANTS
@@ -64,49 +64,52 @@ export default function VerifikasiPelamarScreen({
       console.log("🔍 Fetching applicants...");
       console.log("📍 API URL:", `${BASE_URL}/api/hr/applicants`);
       console.log("👤 User:", user);
+      console.log("🔑 Token:", token ? "Present" : "Missing");
 
       const response = await axios.get(`${BASE_URL}/api/hr/applicants`, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json"
         },
-        timeout: 10000, // 10 seconds timeout
+        timeout: 15000,
       });
 
       console.log("✅ Response status:", response.status);
       console.log("✅ Applicants data:", response.data);
 
       setApplicants(response.data);
-
     } catch (error: any) {
       console.error("❌ Fetch applicants error:", error);
 
       if (axios.isAxiosError(error)) {
         if (error.response) {
-          // Server responded with error
           console.error("Error response:", {
             status: error.response.status,
             data: error.response.data,
           });
 
           const errorMsg = error.response.data?.msg || "Gagal memuat data pelamar";
-          Alert.alert("Error", errorMsg);
 
           if (error.response.status === 403) {
             Alert.alert(
               "Akses Ditolak",
               "Anda tidak memiliki akses ke halaman ini. Pastikan Anda login sebagai HR."
             );
+          } else if (error.response.status === 404) {
+            Alert.alert(
+              "Error",
+              "Endpoint tidak ditemukan. Pastikan server sudah running dan route sudah terdaftar."
+            );
+          } else {
+            Alert.alert("Error", errorMsg);
           }
         } else if (error.request) {
-          // Request sent but no response
           console.error("No response received:", error.request);
           Alert.alert(
             "Koneksi Gagal",
-            "Tidak dapat terhubung ke server. Periksa koneksi internet Anda."
+            "Tidak dapat terhubung ke server. Periksa:\n1. Koneksi internet\n2. URL server sudah benar\n3. Server sedang running"
           );
         } else {
-          // Error in request setup
           console.error("Request error:", error.message);
           Alert.alert("Error", error.message);
         }
@@ -122,21 +125,23 @@ export default function VerifikasiPelamarScreen({
   // ========================================
   // HANDLE VERIFICATION
   // ========================================
-  const handleVerification = async (applicantId: number, status: "approved" | "rejected") => {
+  const handleVerification = async (
+    applicantId: number, 
+    status: "approved" | "rejected"
+  ) => {
     try {
       setProcessing(true);
-
       console.log("🔄 Verifying applicant:", { applicantId, status });
 
       const response = await axios.put(
         `${BASE_URL}/api/hr/verify-applicant/${applicantId}`,
         { status },
         {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json"
           },
-          timeout: 10000,
+          timeout: 15000,
         }
       );
 
@@ -144,7 +149,7 @@ export default function VerifikasiPelamarScreen({
 
       Alert.alert(
         "Berhasil",
-        `Pelamar ${status === "approved" ? "diterima" : "ditolak"}`,
+        response.data.msg || `Pelamar ${status === "approved" ? "diterima" : "ditolak"}`,
         [
           {
             text: "OK",
@@ -156,17 +161,16 @@ export default function VerifikasiPelamarScreen({
           },
         ]
       );
-
     } catch (error: any) {
       console.error("❌ Verification error:", error);
-
+      
       let errorMsg = "Gagal memproses verifikasi";
-
+      
       if (axios.isAxiosError(error) && error.response) {
         errorMsg = error.response.data?.msg || errorMsg;
         console.error("Error details:", error.response.data);
       }
-
+      
       Alert.alert("Error", errorMsg);
     } finally {
       setProcessing(false);
@@ -196,10 +200,10 @@ export default function VerifikasiPelamarScreen({
     
     try {
       const date = new Date(dateString);
-      const options: Intl.DateTimeFormatOptions = { 
-        day: "numeric", 
-        month: "long", 
-        year: "numeric" 
+      const options: Intl.DateTimeFormatOptions = {
+        day: "numeric",
+        month: "long",
+        year: "numeric"
       };
       return date.toLocaleDateString("id-ID", options);
     } catch {
@@ -237,6 +241,11 @@ export default function VerifikasiPelamarScreen({
         {item.birth_place && (
           <Text style={styles.detailText} numberOfLines={1}>
             📍 {item.birth_place}
+          </Text>
+        )}
+        {item.company_name && (
+          <Text style={styles.detailText} numberOfLines={1}>
+            🏢 {item.company_name}
           </Text>
         )}
         <View style={styles.statusBadge}>
