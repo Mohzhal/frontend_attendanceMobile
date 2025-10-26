@@ -54,7 +54,10 @@ export default function DataAbsensiScreen({
   const BASE_URL =
     Constants.expoConfig?.extra?.API_URL ||
     process.env.EXPO_PUBLIC_API_URL ||
-    "http://192.168.1.6:5000";
+    "https://backendattendancemobile-production.up.railway.app";
+
+  // ✅ FIX 3: Default avatar URL online
+  const DEFAULT_AVATAR = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 
   useEffect(() => {
     fetchData();
@@ -84,12 +87,10 @@ export default function DataAbsensiScreen({
   const filterData = () => {
     let filtered = attendanceList;
 
-    // Filter by type
     if (filter !== "all") {
       filtered = filtered.filter((item) => item.type === filter);
     }
 
-    // Filter by search query
     if (searchQuery) {
       filtered = filtered.filter((item) =>
         item.user_name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -104,6 +105,23 @@ export default function DataAbsensiScreen({
     setModalVisible(true);
   };
 
+  // ✅ FIX 3: Fungsi untuk mendapatkan URL foto yang benar
+  const getPhotoUrl = (photoUrl?: string | null) => {
+    // Jika tidak ada foto atau null string
+    if (!photoUrl || photoUrl === "" || photoUrl === "null" || photoUrl === "undefined") {
+      return DEFAULT_AVATAR;
+    }
+    
+    // Jika sudah full URL (http/https), return as is
+    if (photoUrl.startsWith("http://") || photoUrl.startsWith("https://")) {
+      return photoUrl;
+    }
+    
+    // Jika relative path, gabungkan dengan BASE_URL
+    const cleanPath = photoUrl.startsWith("/") ? photoUrl : `/${photoUrl}`;
+    return `${BASE_URL}${cleanPath}`;
+  };
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -116,12 +134,11 @@ export default function DataAbsensiScreen({
   const renderItem = ({ item }: { item: AttendanceItem }) => (
     <TouchableOpacity style={styles.card} onPress={() => openDetail(item)}>
       <Image
-        source={{
-          uri:
-            item.profile_photo_url ||
-            "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-        }}
+        source={{ uri: getPhotoUrl(item.profile_photo_url) }}
         style={styles.avatar}
+        onError={(e) => {
+          console.log("❌ Image load error for:", item.user_name);
+        }}
       />
       <View style={styles.info}>
         <View style={styles.nameRow}>
@@ -356,12 +373,11 @@ export default function DataAbsensiScreen({
                 <View style={styles.modalHeader}>
                   <View style={styles.modalHeaderLeft}>
                     <Image
-                      source={{
-                        uri:
-                          selectedItem.profile_photo_url ||
-                          "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-                      }}
+                      source={{ uri: getPhotoUrl(selectedItem.profile_photo_url) }}
                       style={styles.modalAvatar}
+                      onError={(e) => {
+                        console.log("❌ Modal image error for:", selectedItem.user_name);
+                      }}
                     />
                     <View>
                       <Text style={styles.modalName}>

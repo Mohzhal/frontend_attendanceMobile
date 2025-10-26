@@ -4,11 +4,11 @@
     "slug": "attendancemobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/attendance.png",
+    "icon": "./assets/default-avatar.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
-      "image": "./assets/attendance.png",
+      "image": "./assets/default-avatar.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -17,12 +17,17 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/attendance.png",
+        "foregroundImage": "./assets/default-avatar.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.frontend"
+      "package": "com.anonymous.frontend",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -30,8 +35,29 @@
     "extra": {
       "eas": {
         "projectId": "58d49374-d6fb-4749-8bef-4877420aa244"
-      }
+      },
+      "API_URL": "https://backendattendancemobile-production.up.railway.app"
     },
-    "owner": "4dind4r41802"
+    "owner": "4dind4r41802",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Aplikasi memerlukan akses ke galeri Anda untuk memilih foto absensi."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Izinkan aplikasi mengakses kamera untuk mengambil foto absensi."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Izinkan aplikasi mengakses lokasi untuk mencatat kehadiran."
+        }
+      ]
+    ]
   }
 }

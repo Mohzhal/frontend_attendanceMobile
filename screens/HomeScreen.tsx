@@ -26,7 +26,10 @@ export default function HomeScreen({ route, navigation }) {
   const BASE_URL =
     Constants.expoConfig?.extra?.API_URL ||
     process.env.EXPO_PUBLIC_API_URL ||
-    "http://192.168.1.6:5000";
+    "https://backendattendancemobile-production.up.railway.app";
+
+  // ✅ Default avatar URL online
+  const DEFAULT_AVATAR = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 
   useEffect(() => {
     fetchData();
@@ -49,7 +52,7 @@ export default function HomeScreen({ route, navigation }) {
       );
       setTodayAttendance(attendanceRes.data);
     } catch (err) {
-      console.log("⚠️ Tidak ada absensi hari ini:", err.message);
+      console.log("⚠ Tidak ada absensi hari ini:", err.message);
     } finally {
       setLoading(false);
     }
@@ -57,14 +60,12 @@ export default function HomeScreen({ route, navigation }) {
 
   const handleAttendance = async (type) => {
     try {
-      // Request location permission
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
         Alert.alert("Akses Ditolak", "Izin lokasi diperlukan untuk absensi.");
         return;
       }
 
-      // Navigate to Attendance screen with type and necessary data
       navigation.navigate("Attendance", {
         type: type,
         token: token,
@@ -76,6 +77,24 @@ export default function HomeScreen({ route, navigation }) {
       console.error("❌ Error:", error);
       Alert.alert("Gagal", "Terjadi kesalahan. Silakan coba lagi.");
     }
+  };
+
+  // ✅ FIX 3: Fungsi untuk mendapatkan URL foto yang benar
+  const getPhotoUrl = (photoUrl?: string | null) => {
+    // Jika tidak ada foto atau null string
+    if (!photoUrl || photoUrl === "" || photoUrl === "null" || photoUrl === "undefined") {
+      return DEFAULT_AVATAR;
+    }
+    
+    // Jika sudah full URL (http/https), return as is
+    if (photoUrl.startsWith("http://") || photoUrl.startsWith("https://")) {
+      return photoUrl;
+    }
+    
+    // Jika relative path, gabungkan dengan BASE_URL
+    // Pastikan tidak ada double slash
+    const cleanPath = photoUrl.startsWith("/") ? photoUrl : `/${photoUrl}`;
+    return `${BASE_URL}${cleanPath}`;
   };
 
   const formatTime = (date) =>
@@ -123,7 +142,6 @@ export default function HomeScreen({ route, navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
       
-      {/* Background Gradient */}
       <LinearGradient
         colors={["#0f172a", "#1e293b", "#0f172a"]}
         style={styles.backgroundGradient}
@@ -167,10 +185,11 @@ export default function HomeScreen({ route, navigation }) {
             <View style={styles.profileContent}>
               <View style={styles.avatarContainer}>
                 <Image
-                  source={{
-                    uri: user.profile_photo_url || "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-                  }}
+                  source={{ uri: getPhotoUrl(user.profile_photo_url) }}
                   style={styles.avatar}
+                  onError={(e) => {
+                    console.log("❌ Avatar load error, using default");
+                  }}
                 />
                 <View style={styles.avatarBorder} />
               </View>
@@ -187,7 +206,6 @@ export default function HomeScreen({ route, navigation }) {
               </View>
             </View>
             
-            {/* Decorative Elements */}
             <View style={styles.decorCircle1} />
             <View style={styles.decorCircle2} />
           </LinearGradient>
@@ -346,7 +364,6 @@ export default function HomeScreen({ route, navigation }) {
   );
 }
 
-// === STYLES ===
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -377,8 +394,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
   },
-
-  // Header
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -434,8 +449,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: "#ef4444",
   },
-
-  // Profile Card
   profileCard: {
     marginBottom: 20,
     borderRadius: 20,
@@ -466,6 +479,7 @@ const styles = StyleSheet.create({
     borderRadius: 36,
     borderWidth: 3,
     borderColor: "#fff",
+    backgroundColor: "#e5e7eb",
   },
   avatarBorder: {
     position: "absolute",
@@ -526,8 +540,6 @@ const styles = StyleSheet.create({
     bottom: -20,
     left: -20,
   },
-
-  // Clock Card
   clockCard: {
     marginBottom: 24,
     borderRadius: 20,
@@ -583,8 +595,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "center",
   },
-
-  // Quick Actions
   quickActionsSection: {
     marginBottom: 24,
   },
@@ -641,8 +651,6 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.8)",
     fontSize: 12,
   },
-
-  // Summary Section
   summarySection: {
     marginBottom: 24,
   },

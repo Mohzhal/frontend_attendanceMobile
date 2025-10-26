@@ -12,6 +12,7 @@ import {
   Modal,
   ScrollView,
   Linking,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, { Marker, Circle } from "react-native-maps";
@@ -20,7 +21,7 @@ import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system";
 
 interface Employee {
   id: number;
@@ -54,7 +55,10 @@ export default function HRDetailScreen({ route, navigation }) {
   const BASE_URL =
     Constants.expoConfig?.extra?.API_URL ||
     process.env.EXPO_PUBLIC_API_URL ||
-    "http://192.168.1.7:5000";
+    "https://backendattendancemobile-production.up.railway.app";
+
+  // ✅ FIX 1: Gunakan URL online untuk default avatar (tanpa require)
+  const DEFAULT_AVATAR = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 
   useEffect(() => {
     initializeData();
@@ -79,7 +83,7 @@ export default function HRDetailScreen({ route, navigation }) {
       let userData = route?.params?.user;
 
       if (!authToken || !userCompanyId) {
-        console.log("⚠️ Params incomplete, loading from AsyncStorage...");
+        console.log("⚠ Params incomplete, loading from AsyncStorage...");
         
         const storedToken = await AsyncStorage.getItem("token");
         const storedUser = await AsyncStorage.getItem("user");
@@ -92,16 +96,7 @@ export default function HRDetailScreen({ route, navigation }) {
         userData = JSON.parse(storedUser);
         userCompanyId = userData.company_id;
 
-        console.log("✅ Loaded from AsyncStorage:", {
-          hasToken: !!authToken,
-          companyId: userCompanyId,
-          userName: userData?.name
-        });
-      } else {
-        console.log("✅ Using route params:", {
-          hasToken: !!authToken,
-          companyId: userCompanyId
-        });
+        console.log("✅ Loaded from AsyncStorage");
       }
 
       if (!authToken || !userCompanyId) {
@@ -147,13 +142,14 @@ export default function HRDetailScreen({ route, navigation }) {
         endpoint += "?period=month";
       }
 
-      console.log("📡 Fetching attendance from:", endpoint);
+      console.log("📡 Fetching from:", endpoint);
 
       const response = await axios.get(endpoint, {
         headers: { Authorization: `Bearer ${token}` },
+        timeout: 10000,
       });
 
-      console.log("✅ Response received:", response.data.length, "records");
+      console.log("✅ Response:", response.data.length, "records");
 
       const transformedData = transformAttendanceData(response.data);
       setEmployees(transformedData);
@@ -161,6 +157,8 @@ export default function HRDetailScreen({ route, navigation }) {
     } catch (err) {
       console.error("❌ Fetch error:", err.response?.data || err.message);
       Alert.alert("Error", "Gagal memuat data absensi karyawan");
+      setEmployees([]);
+      setFilteredEmployees([]);
     } finally {
       setLoading(false);
     }
@@ -177,7 +175,7 @@ export default function HRDetailScreen({ route, navigation }) {
       if (!acc[key]) {
         acc[key] = {
           id: item.user_id,
-          name: item.user_name,
+          name: item.user_name || "Unknown",
           profile_photo_url: item.profile_photo_url,
           date: item.date,
           checkin_time: null,
@@ -185,19 +183,30 @@ export default function HRDetailScreen({ route, navigation }) {
           checkin_distance: null,
           checkout_distance: null,
           is_valid: false,
-          latitude: item.latitude,
-          longitude: item.longitude,
-          company_lat: item.company_lat,
-          company_lon: item.company_lon,
+          latitude: null,
+          longitude: null,
+          company_lat: null,
+          company_lon: null,
         };
       }
 
       if (item.type === "checkin") {
         acc[key].checkin_time = item.created_at;
         acc[key].checkin_distance = item.distance;
+        if (item.latitude && item.longitude && 
+            !isNaN(parseFloat(item.latitude)) && !isNaN(parseFloat(item.longitude))) {
+          acc[key].latitude = parseFloat(item.latitude);
+          acc[key].longitude = parseFloat(item.longitude);
+        }
       } else if (item.type === "checkout") {
         acc[key].checkout_time = item.created_at;
         acc[key].checkout_distance = item.distance;
+      }
+
+      if (item.company_lat && item.company_lon &&
+          !isNaN(parseFloat(item.company_lat)) && !isNaN(parseFloat(item.company_lon))) {
+        acc[key].company_lat = parseFloat(item.company_lat);
+        acc[key].company_lon = parseFloat(item.company_lon);
       }
 
       acc[key].is_valid = item.is_valid || acc[key].is_valid;
@@ -221,8 +230,14 @@ export default function HRDetailScreen({ route, navigation }) {
   };
 
   const openDetail = (employee: Employee) => {
-    setSelectedEmployee(employee);
-    setModalVisible(true);
+    try {
+      console.log("📋 Opening detail for:", employee.name);
+      setSelectedEmployee(employee);
+      setModalVisible(true);
+    } catch (error) {
+      console.error("❌ Error opening detail:", error);
+      Alert.alert("Error", "Gagal membuka detail karyawan");
+    }
   };
 
   const formatTime = (dateString?: string) => {
@@ -250,7 +265,24 @@ export default function HRDetailScreen({ route, navigation }) {
     }
   };
 
-  // Share location via Google Maps
+  // ✅ FIX 3: Perbaiki konstruksi URL foto
+  const getPhotoUrl = (photoUrl?: string | null) => {
+    // Jika tidak ada foto, return default avatar
+    if (!photoUrl || photoUrl === "" || photoUrl === "null") {
+      return DEFAULT_AVATAR;
+    }
+    
+    // Jika sudah full URL (http/https), return as is
+    if (photoUrl.startsWith("http://") || photoUrl.startsWith("https://")) {
+      return photoUrl;
+    }
+    
+    // Jika relative path, gabungkan dengan BASE_URL
+    // Pastikan tidak ada double slash
+    const cleanPath = photoUrl.startsWith("/") ? photoUrl : `/${photoUrl}`;
+    return `${BASE_URL}${cleanPath}`;
+  };
+
   const handleShareLocation = (employee: Employee) => {
     if (!employee.latitude || !employee.longitude) {
       Alert.alert("Error", "Lokasi tidak tersedia");
@@ -277,8 +309,7 @@ export default function HRDetailScreen({ route, navigation }) {
           onPress: async () => {
             try {
               if (await Sharing.isAvailableAsync()) {
-                // Create a temporary text file with location info
-                const fileUri = FileSystem.documentDirectory + `lokasi_${employee.name.replace(/\s/g, '_')}.txt`;
+                const fileUri = `${FileSystem.documentDirectory}lokasi_${employee.name.replace(/\s/g, '_')}.txt`;
                 await FileSystem.writeAsStringAsync(fileUri, message);
                 await Sharing.shareAsync(fileUri, {
                   dialogTitle: "Bagikan Lokasi Absensi",
@@ -393,14 +424,13 @@ export default function HRDetailScreen({ route, navigation }) {
       }
     } catch (error) {
       console.error("❌ Print PDF error:", error);
-      Alert.alert("Error", "Gagal mencetak laporan PDF\n\n" + error.message);
+      Alert.alert("Error", `Gagal mencetak laporan PDF\n\n${error.message}`);
     }
   };
 
   const handleExportExcel = async () => {
     try {
       console.log("📊 Starting Excel/CSV export...");
-      console.log("📊 Total data to export:", filteredEmployees.length);
 
       if (filteredEmployees.length === 0) {
         Alert.alert("Peringatan", "Tidak ada data untuk diekspor");
@@ -414,7 +444,6 @@ export default function HRDetailScreen({ route, navigation }) {
           ? "Minggu_Ini"
           : "Bulan_Ini";
 
-      // Generate CSV format (Excel compatible)
       let csvContent = "No,Nama Karyawan,Tanggal,Check In,Check Out,Jarak (meter),Status,Latitude,Longitude\n";
       
       filteredEmployees.forEach((emp, index) => {
@@ -433,62 +462,41 @@ export default function HRDetailScreen({ route, navigation }) {
         csvContent += row + "\n";
       });
 
-      console.log("✅ CSV content generated, length:", csvContent.length);
-
-      // Add BOM for proper Excel UTF-8 encoding
       const BOM = "\uFEFF";
       csvContent = BOM + csvContent;
 
-      // Save to file
       const timestamp = new Date().getTime();
       const fileName = `Laporan_Absensi_${periodText}_${timestamp}.csv`;
-      const fileUri = FileSystem.documentDirectory + fileName;
-
-      console.log("💾 Saving file to:", fileUri);
+      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
 
       await FileSystem.writeAsStringAsync(fileUri, csvContent, {
         encoding: FileSystem.EncodingType.UTF8,
       });
 
-      console.log("✅ File saved successfully");
-
-      // Verify file exists
       const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      console.log("📁 File info:", fileInfo);
 
       if (!fileInfo.exists) {
         throw new Error("File tidak berhasil dibuat");
       }
 
-      // Share file
-      const isAvailable = await Sharing.isAvailableAsync();
-      console.log("📤 Sharing available:", isAvailable);
-
-      if (isAvailable) {
+      if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(fileUri, {
           mimeType: "text/csv",
           dialogTitle: "Bagikan Laporan Excel (CSV)",
           UTI: "public.comma-separated-values-text",
         });
         
-        console.log("✅ File shared successfully");
-        
         Alert.alert(
           "Sukses ✅", 
-          `File CSV berhasil dibuat dan dibagikan!\n\nNama file: ${fileName}\n\nCatatan: File CSV dapat dibuka di Excel, Google Sheets, atau aplikasi spreadsheet lainnya.`
+          `File CSV berhasil dibuat dan dibagikan!\n\nNama file: ${fileName}`
         );
       } else {
-        Alert.alert("Sukses ✅", `File CSV berhasil dibuat!\n\nLokasi: ${fileUri}\n\nNama file: ${fileName}`);
+        Alert.alert("Sukses ✅", `File CSV berhasil dibuat!\n\nLokasi: ${fileUri}`);
       }
 
     } catch (error) {
       console.error("❌ Export Excel error:", error);
-      console.error("❌ Error stack:", error.stack);
-      
-      Alert.alert(
-        "Error ❌", 
-        `Gagal export ke Excel/CSV\n\nDetail error:\n${error.message}\n\nSilakan coba lagi atau hubungi administrator.`
-      );
+      Alert.alert("Error ❌", `Gagal export ke Excel/CSV\n\n${error.message}`);
     }
   };
 
@@ -510,9 +518,6 @@ export default function HRDetailScreen({ route, navigation }) {
       <View style={styles.center}>
         <Ionicons name="alert-circle" size={64} color="#ef4444" />
         <Text style={styles.errorText}>Data tidak lengkap</Text>
-        <Text style={styles.errorSubtext}>
-          Silakan login kembali untuk melanjutkan
-        </Text>
         <TouchableOpacity
           style={styles.retryButton}
           onPress={() => navigation.navigate("Login")}
@@ -523,18 +528,18 @@ export default function HRDetailScreen({ route, navigation }) {
     );
   }
 
-  const renderEmployee = ({ item, index }: { item: Employee; index: number }) => (
+  const renderEmployee = ({ item }: { item: Employee }) => (
     <TouchableOpacity 
       style={styles.card} 
       onPress={() => openDetail(item)}
+      activeOpacity={0.7}
     >
       <Image
-        source={{
-          uri:
-            item.profile_photo_url ||
-            "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-        }}
+        source={{ uri: getPhotoUrl(item.profile_photo_url) }}
         style={styles.avatar}
+        onError={(e) => {
+          console.log("❌ Image load error for:", item.name);
+        }}
       />
       <View style={styles.cardContent}>
         <View style={styles.nameRow}>
@@ -608,6 +613,17 @@ export default function HRDetailScreen({ route, navigation }) {
       </Text>
     </View>
   );
+
+  const canShowMap = (employee: Employee) => {
+    return (
+      employee.latitude != null &&
+      employee.longitude != null &&
+      !isNaN(employee.latitude) &&
+      !isNaN(employee.longitude) &&
+      employee.latitude !== 0 &&
+      employee.longitude !== 0
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -800,11 +816,7 @@ export default function HRDetailScreen({ route, navigation }) {
                 <View style={styles.modalHeader}>
                   <View style={styles.modalHeaderLeft}>
                     <Image
-                      source={{
-                        uri:
-                          selectedEmployee.profile_photo_url ||
-                          "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-                      }}
+                      source={{ uri: getPhotoUrl(selectedEmployee.profile_photo_url) }}
                       style={styles.modalAvatar}
                     />
                     <View>
@@ -907,23 +919,23 @@ export default function HRDetailScreen({ route, navigation }) {
                   </View>
                 </View>
 
-                {selectedEmployee.latitude && selectedEmployee.longitude && (
+                {canShowMap(selectedEmployee) ? (
                   <View style={styles.mapSection}>
                     <Text style={styles.mapTitle}>📍 Lokasi Absensi</Text>
                     <View style={styles.mapContainer}>
                       <MapView
                         style={styles.map}
                         initialRegion={{
-                          latitude: selectedEmployee.latitude,
-                          longitude: selectedEmployee.longitude,
+                          latitude: selectedEmployee.latitude!,
+                          longitude: selectedEmployee.longitude!,
                           latitudeDelta: 0.01,
                           longitudeDelta: 0.01,
                         }}
                       >
                         <Marker
                           coordinate={{
-                            latitude: selectedEmployee.latitude,
-                            longitude: selectedEmployee.longitude,
+                            latitude: selectedEmployee.latitude!,
+                            longitude: selectedEmployee.longitude!,
                           }}
                           title={selectedEmployee.name}
                           description="Lokasi Karyawan"
@@ -931,7 +943,9 @@ export default function HRDetailScreen({ route, navigation }) {
                         />
 
                         {selectedEmployee.company_lat &&
-                          selectedEmployee.company_lon && (
+                          selectedEmployee.company_lon &&
+                          !isNaN(selectedEmployee.company_lat) &&
+                          !isNaN(selectedEmployee.company_lon) && (
                             <>
                               <Marker
                                 coordinate={{
@@ -956,28 +970,39 @@ export default function HRDetailScreen({ route, navigation }) {
                       </MapView>
                     </View>
                   </View>
+                ) : (
+                  <View style={styles.mapSection}>
+                    <Text style={styles.mapTitle}>📍 Lokasi Absensi</Text>
+                    <View style={styles.mapErrorContainer}>
+                      <Ionicons name="location-outline" size={48} color="#9ca3af" />
+                      <Text style={styles.mapErrorText}>
+                        Data lokasi tidak tersedia atau tidak valid
+                      </Text>
+                    </View>
+                  </View>
                 )}
 
-                {/* Action Buttons */}
-                <View style={styles.modalActions}>
-                  <TouchableOpacity 
-                    style={styles.actionBtn}
-                    onPress={() => handleShareLocation(selectedEmployee)}
-                  >
-                    <Ionicons name="share-outline" size={20} color="#2563eb" />
-                    <Text style={styles.actionBtnText}>Bagikan Lokasi</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.actionBtn}
-                    onPress={() => {
-                      const url = `https://www.google.com/maps?q=${selectedEmployee.latitude},${selectedEmployee.longitude}`;
-                      Linking.openURL(url);
-                    }}
-                  >
-                    <Ionicons name="map-outline" size={20} color="#2563eb" />
-                    <Text style={styles.actionBtnText}>Buka Maps</Text>
-                  </TouchableOpacity>
-                </View>
+                {canShowMap(selectedEmployee) && (
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity 
+                      style={styles.actionBtn}
+                      onPress={() => handleShareLocation(selectedEmployee)}
+                    >
+                      <Ionicons name="share-outline" size={20} color="#2563eb" />
+                      <Text style={styles.actionBtnText}>Bagikan Lokasi</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.actionBtn}
+                      onPress={() => {
+                        const url = `https://www.google.com/maps?q=${selectedEmployee.latitude},${selectedEmployee.longitude}`;
+                        Linking.openURL(url);
+                      }}
+                    >
+                      <Ionicons name="map-outline" size={20} color="#2563eb" />
+                      <Text style={styles.actionBtnText}>Buka Maps</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </ScrollView>
             )}
           </View>
@@ -1011,12 +1036,6 @@ const styles = StyleSheet.create({
     color: "#ef4444",
     textAlign: "center",
   },
-  errorSubtext: {
-    marginTop: 8,
-    fontSize: 14,
-    color: "#9ca3af",
-    textAlign: "center",
-  },
   retryButton: {
     marginTop: 24,
     paddingHorizontal: 24,
@@ -1032,7 +1051,7 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "#2563eb",
     padding: 20,
-    paddingTop: 50,
+    paddingTop: Platform.OS === "ios" ? 50 : 40,
     flexDirection: "row",
     alignItems: "center",
     elevation: 4,
@@ -1335,6 +1354,21 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  mapErrorContainer: {
+    height: 200,
+    backgroundColor: "#f9fafb",
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  mapErrorText: {
+    fontSize: 14,
+    color: "#9ca3af",
+    marginTop: 12,
+    textAlign: "center",
   },
   modalActions: {
     flexDirection: "row",

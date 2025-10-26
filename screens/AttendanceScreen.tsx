@@ -10,11 +10,12 @@ import {
   StatusBar,
   Modal,
   Image,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, { Marker, Polyline, Circle } from "react-native-maps";
 import * as Location from "expo-location";
-import { CameraView } from "expo-camera";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import axios from "axios";
 import Constants from "expo-constants";
 
@@ -64,7 +65,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
   
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [showCamera, setShowCamera] = useState(false);
   const [capturedImage, setCapturedImage] = useState<{ uri: string } | null>(null);
   const [attendanceType, setAttendanceType] = useState<'checkin' | 'checkout' | null>(null);
@@ -75,6 +76,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
   }>({});
 
   const [attendanceResult, setAttendanceResult] = useState<AttendanceResult | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const cameraRef = useRef<CameraView | null>(null);
   const mapRef = useRef<MapView | null>(null);
@@ -82,7 +84,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
   const BASE_URL =
     Constants.expoConfig?.extra?.API_URL ||
     process.env.EXPO_PUBLIC_API_URL ||
-    "http://192.168.1.5:5000";
+    "https://backendattendancemobile-production.up.railway.app";
 
   // Fetch company data
   useEffect(() => {
@@ -92,7 +94,6 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
         const res = await axios.get(`${BASE_URL}/api/companies/${user.company_id}`);
         console.log('✅ Company data received:', res.data);
         
-        // ✅ VALIDASI: Pastikan koordinat valid
         if (!res.data.latitude || !res.data.longitude || 
             res.data.latitude === 0 || res.data.longitude === 0) {
           console.error('❌ Invalid company coordinates:', res.data);
@@ -117,83 +118,126 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
 
   // Check today's attendance
   useEffect(() => {
-    const checkTodayAttendance = async () => {
-      try {
-        console.log('📡 Checking today attendance...');
-        
-        const res = await axios.get(`${BASE_URL}/api/attendance`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        console.log('✅ Attendance data received:', res.data);
-
-        const today = new Date().toISOString().split('T')[0];
-        
-        const todayCheckin = res.data.find((record: AttendanceRecord) => {
-          const recordDate = new Date(record.created_at).toISOString().split('T')[0];
-          return recordDate === today && record.type === 'checkin';
-        });
-
-        const todayCheckout = res.data.find((record: AttendanceRecord) => {
-          const recordDate = new Date(record.created_at).toISOString().split('T')[0];
-          return recordDate === today && record.type === 'checkout';
-        });
-
-        console.log('📊 Today check-in:', todayCheckin);
-        console.log('📊 Today check-out:', todayCheckout);
-
-        setTodayAttendance({
-          checkin: todayCheckin || undefined,
-          checkout: todayCheckout || undefined,
-        });
-      } catch (err) {
-        console.error('❌ Error checking attendance:', err);
-        setTodayAttendance({});
-      }
-    };
-    
-    if (token) {
-      checkTodayAttendance();
-    }
+    checkTodayAttendance();
   }, [token, user.id, BASE_URL]);
 
-  const handleAttendanceClick = async () => {
-    if (!todayAttendance.checkin) {
-      setAttendanceType('checkin');
-    } else if (!todayAttendance.checkout) {
-      setAttendanceType('checkout');
-    } else {
-      Alert.alert("Info", "Anda sudah melakukan check-in dan check-out hari ini");
-      return;
-    }
+  const checkTodayAttendance = async () => {
+    try {
+      console.log('📡 Checking today attendance...');
+      
+      const res = await axios.get(`${BASE_URL}/api/attendance`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-    const { Camera } = await import("expo-camera");
-    const { status } = await Camera.requestCameraPermissionsAsync();
-    setHasPermission(status === "granted");
-    
-    if (status === "granted") {
+      console.log('✅ Attendance data received:', res.data);
+
+      const today = new Date().toISOString().split('T')[0];
+      
+      const todayCheckin = res.data.find((record: AttendanceRecord) => {
+        const recordDate = new Date(record.created_at).toISOString().split('T')[0];
+        return recordDate === today && record.type === 'checkin';
+      });
+
+      const todayCheckout = res.data.find((record: AttendanceRecord) => {
+        const recordDate = new Date(record.created_at).toISOString().split('T')[0];
+        return recordDate === today && record.type === 'checkout';
+      });
+
+      console.log('📊 Today check-in:', todayCheckin);
+      console.log('📊 Today check-out:', todayCheckout);
+
+      setTodayAttendance({
+        checkin: todayCheckin || undefined,
+        checkout: todayCheckout || undefined,
+      });
+    } catch (err) {
+      console.error('❌ Error checking attendance:', err);
+      setTodayAttendance({});
+    }
+  };
+
+  const handleAttendanceClick = async () => {
+    try {
+      // ✅ VALIDASI: Check-in harus dilakukan terlebih dahulu
+      if (!todayAttendance.checkin) {
+        setAttendanceType('checkin');
+        console.log("📍 Mode: Check-in");
+      } else if (!todayAttendance.checkout) {
+        setAttendanceType('checkout');
+        console.log("📍 Mode: Check-out");
+      } else {
+        Alert.alert("Info", "Anda sudah melakukan check-in dan check-out hari ini");
+        return;
+      }
+
+      // Cek permission kamera dengan safety check
+      if (!cameraPermission) {
+        console.log("⏳ Loading camera permissions...");
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return handleAttendanceClick();
+      }
+
+      if (!cameraPermission.granted) {
+        console.log("📷 Requesting camera permission...");
+        const result = await requestCameraPermission();
+        
+        if (!result.granted) {
+          Alert.alert(
+            "Izin Kamera Diperlukan",
+            "Aplikasi memerlukan akses kamera untuk mengambil foto absensi.",
+            [{ text: "OK" }]
+          );
+          return;
+        }
+      }
+
+      console.log("✅ Camera permission granted, opening camera...");
+      
+      // Delay untuk mencegah crash di beberapa device
+      if (Platform.OS === 'android') {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
       setShowCamera(true);
-    } else {
-      Alert.alert("Izin kamera dibutuhkan untuk foto absensi!");
+      
+    } catch (error) {
+      console.error("❌ Error opening camera:", error);
+      Alert.alert(
+        "Error",
+        "Terjadi kesalahan saat membuka kamera. Coba lagi.",
+        [{ text: "OK" }]
+      );
     }
   };
 
   const takePicture = async () => {
-    if (cameraRef.current) {
-      try {
-        console.log('📸 Taking picture...');
-        const photo = await cameraRef.current.takePictureAsync({
-          quality: 0.8,
-          exif: true,
-        });
-        console.log('✅ Picture taken:', photo?.uri);
-        setCapturedImage(photo);
-        setShowCamera(false);
-      } catch (err) {
-        const error = err as Error;
-        console.error('❌ Error taking picture:', error);
-        Alert.alert("Gagal mengambil foto", error.message);
+    if (!cameraRef.current) {
+      Alert.alert("Error", "Kamera belum siap");
+      return;
+    }
+
+    try {
+      console.log('📸 Taking picture...');
+      
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.7,
+        exif: false,
+        skipProcessing: true,
+      });
+      
+      if (!photo || !photo.uri) {
+        throw new Error("Gagal mengambil foto");
       }
+      
+      console.log('✅ Picture taken:', photo.uri);
+      setCapturedImage(photo);
+      setShowCamera(false);
+      
+    } catch (err) {
+      const error = err as Error;
+      console.error('❌ Error taking picture:', error);
+      Alert.alert("Gagal Mengambil Foto", "Terjadi kesalahan. Coba lagi.");
+      setShowCamera(false);
     }
   };
 
@@ -203,10 +247,30 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
       return;
     }
 
+    if (submitting) {
+      return;
+    }
+
+    // ✅ VALIDASI ULANG: Pastikan check-in sudah dilakukan sebelum checkout
+    if (attendanceType === 'checkout' && !todayAttendance.checkin) {
+      Alert.alert(
+        "Tidak Bisa Check-out",
+        "Anda harus melakukan check-in terlebih dahulu sebelum check-out.",
+        [{ text: "OK" }]
+      );
+      setCapturedImage(null);
+      setAttendanceType(null);
+      return;
+    }
+
     try {
+      setSubmitting(true);
+
+      // Request location permission
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Izin lokasi dibutuhkan!");
+        Alert.alert("Izin Lokasi Diperlukan", "Aplikasi memerlukan akses lokasi untuk absensi.");
+        setSubmitting(false);
         return;
       }
 
@@ -220,7 +284,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
       const formData = new FormData();
       
       formData.append('photo', {
-        uri: capturedImage.uri,
+        uri: Platform.OS === 'ios' ? capturedImage.uri.replace('file://', '') : capturedImage.uri,
         type: 'image/jpeg',
         name: `absensi-${attendanceType}-${Date.now()}.jpg`,
       } as any);
@@ -229,9 +293,11 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
       formData.append('lat_backup', location.coords.latitude.toString());
       formData.append('lon_backup', location.coords.longitude.toString());
 
-      console.log('📤 Submitting attendance...');
-      console.log('Type:', attendanceType);
-      console.log('Location:', location.coords.latitude, location.coords.longitude);
+      console.log('📤 Submitting attendance...', {
+        type: attendanceType,
+        lat: location.coords.latitude,
+        lon: location.coords.longitude
+      });
 
       const res = await axios.post(
         `${BASE_URL}/api/attendance`,
@@ -241,12 +307,12 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'multipart/form-data',
           },
+          timeout: 30000,
         }
       );
 
       console.log('✅ Attendance response:', res.data);
 
-      // ✅ VALIDASI: Pastikan response memiliki koordinat valid
       if (!res.data.location || !res.data.company_location ||
           res.data.location.latitude === 0 || res.data.location.longitude === 0 ||
           res.data.company_location.latitude === 0 || res.data.company_location.longitude === 0) {
@@ -284,30 +350,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
       setAttendanceType(null);
       
       // Refresh attendance list
-      console.log('🔄 Refreshing attendance list...');
-      const listRes = await axios.get(
-        `${BASE_URL}/api/attendance`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-
-      const today = new Date().toISOString().split('T')[0];
-      
-      const todayCheckin = listRes.data.find((record: AttendanceRecord) => {
-        const recordDate = new Date(record.created_at).toISOString().split('T')[0];
-        return recordDate === today && record.type === 'checkin';
-      });
-
-      const todayCheckout = listRes.data.find((record: AttendanceRecord) => {
-        const recordDate = new Date(record.created_at).toISOString().split('T')[0];
-        return recordDate === today && record.type === 'checkout';
-      });
-
-      setTodayAttendance({
-        checkin: todayCheckin || undefined,
-        checkout: todayCheckout || undefined,
-      });
+      await checkTodayAttendance();
       
     } catch (err) {
       console.error("=== ATTENDANCE ERROR ===");
@@ -323,7 +366,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
         );
       } else if (error.request) {
         console.error('Error request:', error.request);
-        Alert.alert("Gagal", "Tidak dapat terhubung ke server. Pastikan server berjalan di " + BASE_URL);
+        Alert.alert("Gagal", "Tidak dapat terhubung ke server. Periksa koneksi internet Anda.");
       } else {
         console.error('Error message:', error.message);
         Alert.alert("Gagal", error.message || "Terjadi kesalahan");
@@ -331,6 +374,8 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
       console.error("======================");
       
       setCapturedImage(null);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -467,7 +512,6 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
               <Text style={styles.mapHeaderText}>Lokasi Absensi Anda</Text>
             </View>
             
-            {/* ✅ VALIDASI: Cek koordinat valid sebelum render map */}
             {attendanceResult.location.latitude !== 0 && 
              attendanceResult.location.longitude !== 0 &&
              attendanceResult.company_location.latitude !== 0 &&
@@ -488,7 +532,6 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
                   ),
                 }}
               >
-                {/* Circle Radius Kantor */}
                 <Circle
                   center={{
                     latitude: attendanceResult.company_location.latitude,
@@ -500,7 +543,6 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
                   fillColor="rgba(37, 99, 235, 0.1)"
                 />
 
-                {/* Marker Perusahaan */}
                 <Marker
                   coordinate={{
                     latitude: attendanceResult.company_location.latitude,
@@ -514,7 +556,6 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
                   </View>
                 </Marker>
 
-                {/* Marker Karyawan */}
                 <Marker
                   coordinate={{
                     latitude: attendanceResult.location.latitude,
@@ -528,7 +569,6 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
                   </View>
                 </Marker>
 
-                {/* Garis Penghubung */}
                 <Polyline
                   coordinates={[
                     {
@@ -551,16 +591,9 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
                 <Text style={styles.mapErrorText}>
                   Koordinat tidak valid. Periksa data lokasi perusahaan.
                 </Text>
-                <Text style={styles.mapDebugText}>
-                  Perusahaan: ({attendanceResult.company_location.latitude.toFixed(6)}, {attendanceResult.company_location.longitude.toFixed(6)})
-                </Text>
-                <Text style={styles.mapDebugText}>
-                  Anda: ({attendanceResult.location.latitude.toFixed(6)}, {attendanceResult.location.longitude.toFixed(6)})
-                </Text>
               </View>
             )}
             
-            {/* Distance Info */}
             <View style={[
               styles.distanceCard,
               attendanceResult.is_valid ? styles.distanceCardValid : styles.distanceCardInvalid
@@ -594,7 +627,6 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
             Perusahaan: {company.name}
           </Text>
           
-          {/* Status Absensi */}
           {(todayAttendance.checkin || todayAttendance.checkout) && (
             <View style={styles.attendanceStatus}>
               <Text style={styles.statusTitle}>Status Hari Ini:</Text>
@@ -636,6 +668,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
           
           <Text style={styles.infoDescription}>
             📸 Ambil foto untuk melakukan absensi. Pastikan GPS aktif agar lokasi terekam dengan akurat.
+            {!todayAttendance.checkin && "\n\n⚠️ Anda harus check-in terlebih dahulu sebelum bisa check-out."}
           </Text>
           
           <TouchableOpacity 
@@ -644,7 +677,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
               isAttendanceComplete() && styles.attendButtonDisabled
             ]} 
             onPress={handleAttendanceClick}
-            disabled={isAttendanceComplete()}
+            disabled={isAttendanceComplete() || submitting}
           >
             <Ionicons 
               name={!todayAttendance.checkin ? "camera" : !todayAttendance.checkout ? "camera" : "checkmark-circle"} 
@@ -652,7 +685,7 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
               color="#fff" 
             />
             <Text style={styles.attendButtonText}>
-              {getAttendanceButtonText()}
+              {submitting ? "Memproses..." : getAttendanceButtonText()}
             </Text>
           </TouchableOpacity>
         </View>
@@ -663,11 +696,18 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
       {/* Camera Modal */}
       <Modal visible={showCamera} animationType="slide">
         <View style={styles.cameraContainer}>
-          <CameraView 
-            style={StyleSheet.absoluteFillObject}
-            facing="front"
-            ref={cameraRef}
-          />
+          {cameraPermission?.granted ? (
+            <CameraView 
+              style={StyleSheet.absoluteFillObject}
+              facing="front"
+              ref={cameraRef}
+            />
+          ) : (
+            <View style={styles.permissionContainer}>
+              <Ionicons name="camera-off" size={64} color="#9ca3af" />
+              <Text style={styles.permissionText}>Akses kamera diperlukan</Text>
+            </View>
+          )}
           
           <View style={styles.cameraHeader}>
             <View style={styles.cameraHeaderContent}>
@@ -716,19 +756,31 @@ export default function AttendanceScreen({ route }: AttendanceScreenProps) {
             <Ionicons name="information-circle" size={20} color="#60a5fa" />
             <Text style={styles.previewInfoText}>
               Foto akan dikirim bersama data lokasi GPS Anda
+              {attendanceType === 'checkout' && "\n⚠️ Pastikan Anda sudah check-in hari ini"}
             </Text>
           </View>
           
           <View style={styles.previewActions}>
-            <TouchableOpacity style={styles.retakeButton} onPress={retakePhoto}>
+            <TouchableOpacity 
+              style={styles.retakeButton} 
+              onPress={retakePhoto}
+              disabled={submitting}
+            >
               <Ionicons name="camera-reverse" size={24} color="#fff" />
               <Text style={styles.retakeButtonText}>Ambil Ulang</Text>
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.submitButton} onPress={handleSubmitAttendance}>
-              <Ionicons name="checkmark" size={24} color="#fff" />
+            <TouchableOpacity 
+              style={[
+                styles.submitButton,
+                submitting && styles.submitButtonDisabled
+              ]} 
+              onPress={handleSubmitAttendance}
+              disabled={submitting}
+            >
+              <Ionicons name={submitting ? "hourglass" : "checkmark"} size={24} color="#fff" />
               <Text style={styles.submitButtonText}>
-                Kirim {attendanceType === 'checkin' ? 'Check-in' : 'Check-out'}
+                {submitting ? "Mengirim..." : `Kirim ${attendanceType === 'checkin' ? 'Check-in' : 'Check-out'}`}
               </Text>
             </TouchableOpacity>
           </View>
@@ -865,12 +917,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 16,
     lineHeight: 20,
-  },
-  mapDebugText: {
-    fontSize: 11,
-    color: "#9ca3af",
-    marginTop: 4,
-    fontFamily: "monospace",
   },
   companyMarker: {
     width: 50,
@@ -1021,6 +1067,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000",
   },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#111827",
+  },
+  permissionText: {
+    fontSize: 16,
+    color: "#9ca3af",
+    marginTop: 16,
+  },
   cameraHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1140,6 +1197,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     gap: 8,
+  },
+  submitButtonDisabled: {
+    backgroundColor: "#374151",
   },
   submitButtonText: {
     fontSize: 16,
